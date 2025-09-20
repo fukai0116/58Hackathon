@@ -3,3 +3,7 @@ uvicorn[standard]
 python-multipart
 deepface
 opencv-python
+faster-whisper==0.9.0
+pydub==0.25.1
+torch
+numpy

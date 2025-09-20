@@ -101,3 +101,112 @@ button:disabled {
   color: white;
   text-transform: capitalize;
 }
+
+/* コントロールボタン */
+.controls {
+  display: flex;
+  gap: 16px;
+  margin: 20px 0;
+}
+
+button.listening {
+  background-color: #ff4444;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+/* 文字起こし結果表示 */
+.transcript-container {
+  margin-top: 24px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  min-height: 100px;
+}
+
+.transcript-container h3 {
+  margin: 0 0 12px 0;
+  font-size: 1.2rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.listening-indicator {
+  color: #ff4444;
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+.transcription-segments {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.transcription-segment {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 12px;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.transcription-segment:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.transcription-segment .text {
+  margin: 0 0 8px 0;
+  font-size: 1.1rem;
+  line-height: 1.5;
+  color: #fff;
+}
+
+.transcription-segment .timestamp {
+  color: #888;
+  font-size: 0.9rem;
+}
+
+.no-results {
+  color: #888;
+  font-style: italic;
+  text-align: center;
+  padding: 20px;
+}
+
+button.recording {
+  background-color: #ff4444;
+  animation: pulse 1.5s infinite;
+}
+
+.recording-indicator {
+  color: #ff4444;
+  font-size: 0.8em;
+  margin-left: 8px;
+  animation: blink 1s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* 分析結果のレイアウト調整 */
+.analysis-results {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  padding-bottom: 20px;
+  margin-bottom: 20px;
+}

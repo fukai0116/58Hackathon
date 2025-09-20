@@ -1,8 +1,17 @@
 import { useState, useRef, useEffect } from 'react';
 import Webcam from 'react-webcam';
-import { analyzeEmotion } from './services/api';
+import { analyzeEmotion, transcribeAudio } from './services/api';
 import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import './App.css';
+
+// Web Speech APIの型定義
+declare global {
+  interface Window {
+    webkitSpeechRecognition: any;
+  }
+}
+
+type SpeechRecognition = any;
 
 const videoConstraints = {
   width: 720,
@@ -14,6 +23,23 @@ interface FaceOverlay {
   x: number;
   y: number;
   text: string;
+}
+
+interface Transcript {
+  text: string;
+  isFinal: boolean;
+}
+
+interface TranscriptionSegment {
+  start: number;
+  end: number;
+  text: string;
+  words: {
+    word: string;
+    start: number;
+    end: number;
+    probability: number;
+  }[];
 }
 
 interface AnalysisResult {
@@ -32,6 +58,65 @@ function App() {
   const [faceLandmarker, setFaceLandmarker] = useState<FaceLandmarker | null>(null);
   const [faceOverlay, setFaceOverlay] = useState<FaceOverlay | null>(null);
   const lastVideoTimeRef = useRef<number>(-1);
+  
+  // 音声認識関連の状態
+  const [transcript, setTranscript] = useState<Transcript>({ text: '', isFinal: true });
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const [transcriptionResults, setTranscriptionResults] = useState<TranscriptionSegment[]>([]);
+
+  // 録音機能の制御
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm'
+      });
+      
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        try {
+          const result = await transcribeAudio(audioBlob);
+          setTranscriptionResults(result.segments);
+        } catch (err: any) {
+          setError(err.message || '文字起こしに失敗しました');
+        }
+        // ストリームを停止
+        mediaRecorder.stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorder.start(1000); // 1秒ごとにデータを取得
+      setIsRecording(true);
+      setError(null);
+    } catch (error: any) {
+      setError('マイクのアクセスに失敗しました: ' + error.message);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  const toggleRecording = () => {
+    if (!isRecording) {
+      startRecording();
+    } else {
+      stopRecording();
+    }
+  };
 
   useEffect(() => {
     const createFaceLandmarker = async () => {
@@ -150,23 +235,51 @@ function App() {
             </div>
           )}
         </div>
-        <button 
-          onClick={handleToggleAnalysis}
-          disabled={!faceLandmarker}>
-          {isAnalyzing ? 'Stop Analysis' : 'Start Analysis'}
-        </button>
+        <div className="controls">
+          <button 
+            onClick={handleToggleAnalysis}
+            disabled={!faceLandmarker}>
+            {isAnalyzing ? '感情分析を停止' : '感情分析を開始'}
+          </button>
+          <button 
+            onClick={toggleRecording}
+            className={isRecording ? 'recording' : ''}>
+            {isRecording ? '録音停止' : '録音開始'}
+          </button>
+        </div>
+
         <div className="results">
-          {analysisResult?.dominant_emotion && (
-            <p className="emotion-result">
-              Detected Emotion: <span>{analysisResult.dominant_emotion}</span>
-            </p>
-          )}
-          <div className="other-results">
-            {analysisResult?.age && <p>Age: <span>{analysisResult.age}</span></p>}
-            {analysisResult?.dominant_gender && <p>Gender: <span>{analysisResult.dominant_gender}</span></p>}
-            {analysisResult?.dominant_race && <p>Race: <span>{analysisResult.dominant_race}</span></p>}
+          <div className="analysis-results">
+            {analysisResult?.dominant_emotion && (
+              <p className="emotion-result">
+                検出された感情: <span>{analysisResult.dominant_emotion}</span>
+              </p>
+            )}
+            <div className="other-results">
+              {analysisResult?.age && <p>年齢: <span>{analysisResult.age}</span></p>}
+              {analysisResult?.dominant_gender && <p>性別: <span>{analysisResult.dominant_gender}</span></p>}
+              {analysisResult?.dominant_race && <p>人種: <span>{analysisResult.dominant_race}</span></p>}
+            </div>
           </div>
-          {error && <p className="error-message">Error: {error}</p>}
+
+          <div className="transcript-container">
+            <h3>文字起こし結果 {isRecording && <span className="recording-indicator">●録音中</span>}</h3>
+            <div className="transcription-segments">
+              {transcriptionResults.map((segment, index) => (
+                <div key={index} className="transcription-segment">
+                  <p className="text">{segment.text}</p>
+                  <small className="timestamp">
+                    {`${segment.start.toFixed(1)}秒 - ${segment.end.toFixed(1)}秒`}
+                  </small>
+                </div>
+              ))}
+              {transcriptionResults.length === 0 && (
+                <p className="no-results">（ここに文字起こし結果が表示されます）</p>
+              )}
+            </div>
+          </div>
+          
+          {error && <p className="error-message">エラー: {error}</p>}
         </div>
       </header>
     </div>
