@@ -14,8 +14,8 @@ declare global {
 type SpeechRecognition = any;
 
 const videoConstraints = {
-  width: 720,
-  height: 480,
+  width: { ideal: 1920 },
+  height: { ideal: 1080 },
   facingMode: 'user',
 };
 
@@ -44,6 +44,7 @@ interface TranscriptionSegment {
 
 interface AnalysisResult {
   dominant_emotion: string | null;
+  emotion_scores: { [key: string]: number } | null;
   age: number | null;
   dominant_gender: string | null;
   dominant_race: string | null;
@@ -186,10 +187,21 @@ function App() {
             // 鼻の上部あたりを基準点にする (landmark 6)
             const noseTip = landmarks[6];
             if (noseTip && analysisResult?.dominant_emotion) {
+              // 感情を日本語に変換
+              const emotionToJapanese = {
+                'angry': '怒り',
+                'disgust': '嫌悪',
+                'fear': '恐れ',
+                'happy': '喜び',
+                'sad': '悲しみ',
+                'surprise': '驚き',
+                'neutral': '無表情'
+              };
+              
               setFaceOverlay({
                 x: noseTip.x * video.clientWidth,
-                y: (noseTip.y * video.clientHeight) - 50, // 頭上に表示するため少し上にオフセット
-                text: analysisResult.dominant_emotion
+                y: (noseTip.y * video.clientHeight) - 50,
+                text: emotionToJapanese[analysisResult.dominant_emotion as keyof typeof emotionToJapanese] || analysisResult.dominant_emotion
               });
             }
           } else {
@@ -226,7 +238,7 @@ function App() {
               className="ar-overlay"
               style={{
                 position: 'absolute',
-                top: `${faceOverlay.y}px`,
+                top: `${faceOverlay.y - 50}px`, // さらに上に配置
                 left: `${faceOverlay.x}px`,
                 transform: 'translate(-50%, -100%)'
               }}
@@ -238,7 +250,8 @@ function App() {
         <div className="controls">
           <button 
             onClick={handleToggleAnalysis}
-            disabled={!faceLandmarker}>
+            disabled={!faceLandmarker}
+            className={isAnalyzing ? 'active' : ''}>
             {isAnalyzing ? '感情分析を停止' : '感情分析を開始'}
           </button>
           <button 
@@ -262,7 +275,16 @@ function App() {
             </div>
           </div>
 
-          <div className="transcript-container">
+          <div 
+            className="transcript-container"
+            style={{
+              position: 'absolute',
+              top: faceOverlay ? `${faceOverlay.y + 300}px` : '50%', // あごの下に表示するため下方向にオフセット
+              left: faceOverlay ? `${faceOverlay.x}px` : '80%',
+              transform: 'translate(-50%, 0)', // 中央揃えだけ維持
+              transition: 'all 0.3s ease-out'
+            }}
+          >
             <h3>文字起こし結果 {isRecording && <span className="recording-indicator">●録音中</span>}</h3>
             <div className="transcription-segments">
               {transcriptionResults.map((segment, index) => (
