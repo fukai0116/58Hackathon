@@ -68,6 +68,11 @@
   letter-spacing: 0.05em;
 }
 
+.gesture-overlay {
+  color: #ffd54f;
+  border-color: rgba(255, 213, 79, 0.5);
+}
+
 button {
   margin-top: 20px;
   padding: 12px 24px;

@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import Webcam from 'react-webcam';
 import { analyzeEmotion, transcribeAudio } from './services/api';
-import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
+import { FaceLandmarker, FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision';
+import { appendEmotionLog, appendTranscriptServer, appendTranscriptBrowser } from './utils/storage';
 import './App.css';
 
 // Web Speech APIの型定義
@@ -60,6 +61,8 @@ function App() {
   const isLoadingRef = useRef<boolean>(false);
   const [faceLandmarker, setFaceLandmarker] = useState<FaceLandmarker | null>(null);
   const [faceOverlay, setFaceOverlay] = useState<FaceOverlay | null>(null);
+  const [gestureRecognizer, setGestureRecognizer] = useState<GestureRecognizer | null>(null);
+  const [gestureOverlay, setGestureOverlay] = useState<FaceOverlay | null>(null);
   const lastVideoTimeRef = useRef<number>(-1);
   const [recognitionMode, setRecognitionMode] = useState<RecognitionMode>('server');
   
@@ -93,6 +96,17 @@ function App() {
         try {
           const result = await transcribeAudio(audioBlob);
           setTranscriptionResults(result.segments);
+          result.segments.forEach((seg) => {
+            try {
+              appendTranscriptServer({
+                text: seg.text,
+                start: seg.start,
+                end: seg.end,
+                language: result.language,
+                language_probability: result.language_probability,
+              });
+            } catch {}
+          });
         } catch (err: any) {
           setError(err.message || '文字起こしに失敗しました');
         }
@@ -134,6 +148,9 @@ function App() {
         if (res.isFinal) finalText += res[0].transcript; else interimText += res[0].transcript;
       }
       setTranscript({ text: (finalText ? transcript.text + finalText : transcript.text + interimText), isFinal: !!finalText });
+      if (finalText && finalText.trim().length > 0) {
+        try { appendTranscriptBrowser(finalText.trim()); } catch {}
+      }
     };
     recognition.onerror = (e: any) => {
       setError('音声認識エラー: ' + (e?.error || 'unknown'));
@@ -188,6 +205,65 @@ function App() {
     createFaceLandmarker();
   }, []);
 
+  // Gesture Recognizer 初期化
+  useEffect(() => {
+    const createGestureRecognizer = async () => {
+      const vision = await FilesetResolver.forVisionTasks(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
+      );
+      const recognizer = await GestureRecognizer.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task',
+          delegate: 'GPU'
+        },
+        runningMode: 'VIDEO',
+        numHands: 2
+      });
+      setGestureRecognizer(recognizer);
+    };
+    createGestureRecognizer();
+  }, []);
+
+  // ジェスチャー認識ループ（顔オーバーレイ位置の近くに表示）
+  useEffect(() => {
+    if (!isAnalyzing) { setGestureOverlay(null); return; }
+    let rafId = 0;
+    const loop = () => {
+      try {
+        const video = webcamRef.current?.video as HTMLVideoElement | undefined;
+        if (video && gestureRecognizer) {
+          const g = gestureRecognizer.recognizeForVideo(video, Date.now());
+          let label: string | null = null;
+          if (g?.gestures && g.gestures.length > 0 && g.gestures[0].length > 0) {
+            const top = g.gestures[0][0];
+            if (top?.score >= 0.5) label = top.categoryName;
+          }
+          if (label && faceOverlay) {
+            const map: Record<string, string> = {
+              'Open_Palm': '手のひら',
+              'Closed_Fist': 'グー',
+              'Pointing_Up': '上を指差し',
+              'Thumb_Up': 'いいね',
+              'Thumb_Down': 'だめ',
+              'Victory': 'ピース',
+              'ILoveYou': 'アイラブユー'
+            };
+            setGestureOverlay({
+              x: faceOverlay.x,
+              y: faceOverlay.y - 60,
+              text: map[label] || label
+            });
+          } else {
+            setGestureOverlay(null);
+          }
+        }
+      } catch {}
+      rafId = requestAnimationFrame(loop);
+    };
+    loop();
+    return () => cancelAnimationFrame(rafId);
+  }, [isAnalyzing, gestureRecognizer, faceOverlay]);
+
   const handleToggleAnalysis = () => {
     setIsAnalyzing(prev => !prev);
     if (isAnalyzing) {
@@ -214,6 +290,12 @@ function App() {
         try {
           const result = await analyzeEmotion(imageSrc);
           setAnalysisResult(result);
+          appendEmotionLog({
+            dominant_emotion: result?.dominant_emotion ?? null,
+            age: result?.age ?? null,
+            dominant_gender: result?.dominant_gender ?? null,
+            dominant_race: result?.dominant_race ?? null,
+          });
         } catch (err: any) {
           setError(err.message || 'Failed to analyze emotion.');
           setIsAnalyzing(false); // Stop analysis on error
@@ -297,6 +379,19 @@ function App() {
               }}
             >
               {faceOverlay.text}
+            </div>
+          )}
+          {gestureOverlay && (
+            <div 
+              className="ar-overlay gesture-overlay"
+              style={{
+                position: 'absolute',
+                top: `${gestureOverlay.y - 50}px`,
+                left: `${gestureOverlay.x}px`,
+                transform: 'translate(-50%, -100%)'
+              }}
+            >
+              {gestureOverlay.text}
             </div>
           )}
         </div>
