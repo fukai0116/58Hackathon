@@ -37,6 +37,33 @@ interface TranscriptionResponse {
   language_probability: number;
 }
 
+// マルチモーダル分析の型
+export interface MultimodalEntryInput {
+  timestamp: string;
+  text: string;
+  mode: 'server' | 'browser';
+  start?: number;
+  end?: number;
+  emotion?: {
+    dominant_emotion: string | null;
+    emotion_scores?: { [k: string]: number } | null;
+  };
+  gesture?: {
+    label?: string | null;
+    label_ja?: string | null;
+    score?: number | null;
+  } | null;
+}
+
+export interface GeminiAnalysisResponse {
+  summary: string;
+  emotion: string;
+  intent?: string;
+  inner_voice?: string;
+  confidence?: number;
+  raw?: any;
+}
+
 export const transcribeAudio = async (audioBlob: Blob): Promise<TranscriptionResponse> => {
   const formData = new FormData();
   // BlobのMIMEタイプに応じて拡張子を選択（バックエンドの受理形式に合わせる）
@@ -71,6 +98,21 @@ export const analyzeEmotion = async (imageBase64: string) => {
     } else {
       // その他のエラー
       throw new Error('An unexpected error occurred.');
+    }
+  }
+};
+
+export const analyzeWithGemini = async (entries: MultimodalEntryInput[]): Promise<GeminiAnalysisResponse> => {
+  try {
+    const response = await apiClient.post('/gemini/analyze', { entries }, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response) {
+      throw new Error(error.response.data.detail || 'Gemini分析に失敗しました');
+    } else {
+      throw new Error('Gemini分析中に予期せぬエラーが発生しました');
     }
   }
 };

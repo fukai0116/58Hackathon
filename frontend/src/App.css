@@ -73,6 +73,22 @@
   border-color: rgba(255, 213, 79, 0.5);
 }
 
+.analysis-overlay {
+  color: #a5d6a7; /* greenish */
+  border-color: rgba(165, 214, 167, 0.5);
+  white-space: normal;
+  max-width: 40vw;
+  word-break: break-word;
+}
+
+.inner-voice-overlay {
+  color: #f48fb1; /* pink */
+  border-color: rgba(244, 143, 177, 0.5);
+  white-space: normal;
+  max-width: 40vw;
+  word-break: break-word;
+}
+
 button {
   margin-top: 20px;
   padding: 12px 24px;

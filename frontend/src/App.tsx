@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import Webcam from 'react-webcam';
-import { analyzeEmotion, transcribeAudio } from './services/api';
+import { analyzeEmotion, transcribeAudio, analyzeWithGemini } from './services/api';
 import { FaceLandmarker, FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision';
-import { appendEmotionLog, appendTranscriptServer, appendTranscriptBrowser } from './utils/storage';
+import { appendEmotionLog, appendTranscriptServer, appendTranscriptBrowser, appendMultimodalPending, appendGeminiAnalysisLog } from './utils/storage';
 import './App.css';
 
 // Web Speech APIの型定義
@@ -63,6 +63,7 @@ function App() {
   const [faceOverlay, setFaceOverlay] = useState<FaceOverlay | null>(null);
   const [gestureRecognizer, setGestureRecognizer] = useState<GestureRecognizer | null>(null);
   const [gestureOverlay, setGestureOverlay] = useState<FaceOverlay | null>(null);
+  const lastGestureRef = useRef<{ label: string | null; label_ja: string | null; score: number | null } | null>(null);
   const lastVideoTimeRef = useRef<number>(-1);
   const [recognitionMode, setRecognitionMode] = useState<RecognitionMode>('server');
   
@@ -74,6 +75,77 @@ function App() {
   const [transcriptionResults, setTranscriptionResults] = useState<TranscriptionSegment[]>([]);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const browserRecognitionKeepAliveRef = useRef<boolean>(false);
+  const lastServerIndexRef = useRef<number>(0);
+  const [geminiResult, setGeminiResult] = useState<{ summary: string; emotion?: string; intent?: string; inner_voice?: string; confidence?: number } | null>(null);
+  const [viewport, setViewport] = useState<{ w: number; h: number }>({ w: window.innerWidth, h: window.innerHeight });
+
+  const clamp = (val: number, min: number, max: number) => Math.min(Math.max(val, min), max);
+  const sanitizeSummary = (s?: string) => {
+    if (!s) return '';
+    let out = s;
+    try {
+      out = out.replace(/```[\s\S]*?```/g, '');
+      const firstLine = out.split('\n').find(l => l.trim().length > 0) || out;
+      out = firstLine.replace(/https?:\/\/\S+/g, '');
+      // 長い英語の羅列を削除（5語以上の連続英単語群）
+      out = out.replace(/[A-Za-z0-9_.,;:()\[\]{}<>\-\/?!@#$%^&*+=~`|]+(?:\s+[A-Za-z0-9_.,;:()\[\]{}<>\-\/?!@#$%^&*+=~`|]+){4,}/g, '');
+      if (out.length > 80) out = out.slice(0, 80) + '…';
+      return out.trim();
+    } catch { return s; }
+  };
+  const sanitizeInner = (s?: string) => {
+    if (!s) return '';
+    let out = s;
+    try {
+      out = out.split('\n')[0];
+      if (out.length > 60) out = out.slice(0, 60) + '…';
+      return out.trim();
+    } catch { return s; }
+  };
+
+  const appendCombinedAndMaybeAnalyze = async (params: { text: string; mode: 'server' | 'browser'; start?: number; end?: number; }) => {
+    const entry = {
+      timestamp: new Date().toISOString(),
+      text: params.text,
+      mode: params.mode,
+      start: params.start,
+      end: params.end,
+      emotion: analysisResult ? {
+        dominant_emotion: analysisResult.dominant_emotion,
+        emotion_scores: analysisResult.emotion_scores || null,
+      } : undefined,
+      gesture: lastGestureRef.current ? {
+        label: lastGestureRef.current.label,
+        label_ja: lastGestureRef.current.label_ja,
+        score: lastGestureRef.current.score,
+      } : null,
+    };
+    try {
+      // 保存（履歴として）
+      appendMultimodalPending(entry as any);
+      // 1件ごとに即分析
+      const result = await analyzeWithGemini([entry] as any);
+      appendGeminiAnalysisLog({
+        timestamp: new Date().toISOString(),
+        items: [entry] as any,
+        summary: (result as any).summary,
+        emotion: (result as any).emotion,
+        intent: (result as any).intent,
+        inner_voice: (result as any).inner_voice,
+        confidence: (result as any).confidence,
+        raw: (result as any).raw,
+      } as any);
+      setGeminiResult({
+        summary: (result as any).summary,
+        emotion: (result as any).emotion,
+        intent: (result as any).intent,
+        inner_voice: (result as any).inner_voice,
+        confidence: (result as any).confidence,
+      });
+    } catch (e: any) {
+      setError(e?.message || 'Gemini分析に失敗しました');
+    }
+  };
 
   // 録音機能の制御
   const startRecording = async () => {
@@ -156,7 +228,9 @@ function App() {
       }
       setTranscript(prev => ({ text: (finalText ? (prev.text + finalText) : (prev.text + interimText)), isFinal: !!finalText }));
       if (finalText && finalText.trim().length > 0) {
-        try { appendTranscriptBrowser(finalText.trim()); } catch {}
+        const t = finalText.trim();
+        try { appendTranscriptBrowser(t); } catch {}
+        appendCombinedAndMaybeAnalyze({ text: t, mode: 'browser' });
       }
     };
     recognition.onerror = (e: any) => {
@@ -249,6 +323,23 @@ function App() {
     createGestureRecognizer();
   }, []);
 
+  useEffect(() => {
+    const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  // サーバーモードの新規セグメントをマルチモーダル保存
+  useEffect(() => {
+    if (transcriptionResults.length > lastServerIndexRef.current) {
+      for (let i = lastServerIndexRef.current; i < transcriptionResults.length; i++) {
+        const seg = transcriptionResults[i];
+        appendCombinedAndMaybeAnalyze({ text: seg.text, mode: 'server', start: seg.start, end: seg.end });
+      }
+      lastServerIndexRef.current = transcriptionResults.length;
+    }
+  }, [transcriptionResults]);
+
   // ジェスチャー認識ループ（顔オーバーレイ位置の近くに表示）
   useEffect(() => {
     if (!isAnalyzing) { setGestureOverlay(null); return; }
@@ -262,6 +353,19 @@ function App() {
           if (g?.gestures && g.gestures.length > 0 && g.gestures[0].length > 0) {
             const top = g.gestures[0][0];
             if (top?.score >= 0.5) label = top.categoryName;
+            lastGestureRef.current = {
+              label: label,
+              label_ja: label ? ({
+                'Open_Palm': '手のひら',
+                'Closed_Fist': 'グー',
+                'Pointing_Up': '上を指差し',
+                'Thumb_Up': 'いいね',
+                'Thumb_Down': 'だめ',
+                'Victory': 'ピース',
+                'ILoveYou': 'アイラブユー'
+              } as any)[label] || label : null,
+              score: top?.score ?? null,
+            };
           }
           if (label && faceOverlay) {
             const map: Record<string, string> = {
@@ -405,6 +509,43 @@ function App() {
             >
               {faceOverlay.text}
             </div>
+          )}
+          {faceOverlay && geminiResult && (
+            (() => {
+              const margin = 16;
+              const top1 = clamp(faceOverlay.y - 120, margin, viewport.h - margin);
+              const left1 = clamp(faceOverlay.x, margin, viewport.w - margin);
+              const top2 = clamp(faceOverlay.y - 10, margin, viewport.h - margin);
+              const left2 = clamp(faceOverlay.x + 220, margin, viewport.w - margin);
+              const summaryText = sanitizeSummary(geminiResult.summary || `${geminiResult.emotion || ''} ${geminiResult.intent || ''}`);
+              const innerText = sanitizeInner(geminiResult.inner_voice || '');
+              return (
+                <>
+                  <div
+                    className="ar-overlay analysis-overlay"
+                    style={{
+                      position: 'absolute',
+                      top: `${top1}px`,
+                      left: `${left1}px`,
+                      transform: 'translate(-50%, -100%)'
+                    }}
+                  >
+                    ① {summaryText}
+                  </div>
+                  <div
+                    className="ar-overlay inner-voice-overlay"
+                    style={{
+                      position: 'absolute',
+                      top: `${top2}px`,
+                      left: `${left2}px`,
+                      transform: 'translate(-50%, -100%)'
+                    }}
+                  >
+                    ② 「{innerText || '心の声が読み取れません'}」
+                  </div>
+                </>
+              );
+            })()
           )}
           {gestureOverlay && (
             <div 

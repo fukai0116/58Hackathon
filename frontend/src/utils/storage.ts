@@ -19,8 +19,42 @@ export interface TranscriptLogEntry {
   mode?: 'server' | 'browser';
 }
 
+// マルチモーダル（感情+ジェスチャー+テキスト）エントリ
+export interface MultimodalEntry {
+  timestamp: string;
+  // text
+  text: string;
+  mode: 'server' | 'browser';
+  start?: number;
+  end?: number;
+  // emotion snapshot
+  emotion?: {
+    dominant_emotion: string | null;
+    emotion_scores?: { [k: string]: number } | null;
+  };
+  // gesture snapshot
+  gesture?: {
+    label?: string | null; // English label
+    label_ja?: string | null; // Display label
+    score?: number | null;
+  } | null;
+}
+
+export interface GeminiAnalysisResult {
+  timestamp: string; // when analyzed
+  items: MultimodalEntry[]; // batch inputs
+  summary: string; // 分析結果の要約
+  emotion: string; // 推定主要感情
+  intent?: string; // 意図
+  inner_voice?: string; // 心の声
+  confidence?: number; // 0-1
+  raw?: any; // backendからの追加情報
+}
+
 const EMOTION_KEY = 'emotion_log';
 const TRANSCRIPT_KEY = 'transcript_log';
+const MULTIMODAL_PENDING_KEY = 'multimodal_pending';
+const ANALYSIS_LOG_KEY = 'gemini_analysis_log';
 const MAX_LOG_LENGTH = 500; // ログ肥大化の抑制用
 
 function readJson<T>(key: string): T[] {
@@ -87,6 +121,8 @@ export function appendTranscriptBrowser(text: string) {
 export function clearLogs() {
   localStorage.removeItem(EMOTION_KEY);
   localStorage.removeItem(TRANSCRIPT_KEY);
+  localStorage.removeItem(MULTIMODAL_PENDING_KEY);
+  localStorage.removeItem(ANALYSIS_LOG_KEY);
 }
 
 export function getEmotionLogs(): EmotionLogEntry[] {
@@ -97,3 +133,24 @@ export function getTranscriptLogs(): TranscriptLogEntry[] {
   return readJson<TranscriptLogEntry>(TRANSCRIPT_KEY);
 }
 
+// マルチモーダル: pendingバッファ
+export function appendMultimodalPending(entry: MultimodalEntry) {
+  appendWithCap<MultimodalEntry>(MULTIMODAL_PENDING_KEY, entry);
+}
+
+export function getMultimodalPending(): MultimodalEntry[] {
+  return readJson<MultimodalEntry>(MULTIMODAL_PENDING_KEY);
+}
+
+export function clearMultimodalPending() {
+  try { localStorage.removeItem(MULTIMODAL_PENDING_KEY); } catch {}
+}
+
+// 分析結果ログ
+export function appendGeminiAnalysisLog(result: GeminiAnalysisResult) {
+  appendWithCap<GeminiAnalysisResult>(ANALYSIS_LOG_KEY, result);
+}
+
+export function getGeminiAnalysisLogs(): GeminiAnalysisResult[] {
+  return readJson<GeminiAnalysisResult>(ANALYSIS_LOG_KEY);
+}

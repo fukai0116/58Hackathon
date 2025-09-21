@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.endpoints import emotion, transcribe
+from app.api.endpoints import emotion, transcribe, gemini
 
 app = FastAPI()
 
@@ -21,6 +21,7 @@ app.add_middleware(
 
 app.include_router(emotion.router, prefix="/api")
 app.include_router(transcribe.router, prefix="/api")
+app.include_router(gemini.router, prefix="/api")
 
 @app.get("/")
 def read_root():
