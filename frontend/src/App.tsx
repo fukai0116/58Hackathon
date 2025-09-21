@@ -427,7 +427,7 @@ function App() {
             className="transcript-container"
             style={{
               position: 'absolute',
-              top: faceOverlay ? `${faceOverlay.y + 300}px` : '50%', // あごの下に表示するため下方向にオフセット
+              top: faceOverlay ? `${faceOverlay.y + 250}px` : '50%', // あごの下に表示するため下方向にオフセット
               left: faceOverlay ? `${faceOverlay.x}px` : '80%',
               transform: 'translate(-50%, 0)', // 中央揃えだけ維持
               transition: 'all 0.3s ease-out'
