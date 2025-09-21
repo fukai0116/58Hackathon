@@ -39,7 +39,10 @@ interface TranscriptionResponse {
 
 export const transcribeAudio = async (audioBlob: Blob): Promise<TranscriptionResponse> => {
   const formData = new FormData();
-  formData.append('audio', audioBlob, 'audio.webm');
+  // BlobのMIMEタイプに応じて拡張子を選択（バックエンドの受理形式に合わせる）
+  const type = audioBlob.type || 'audio/webm';
+  const ext = type.includes('webm') ? 'webm' : (type.includes('mp4') ? 'm4a' : 'webm');
+  formData.append('audio', audioBlob, `audio.${ext}`);
 
   try {
     const response = await apiClient.post('/transcribe', formData);

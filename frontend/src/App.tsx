@@ -73,14 +73,20 @@ function App() {
   const audioChunksRef = useRef<Blob[]>([]);
   const [transcriptionResults, setTranscriptionResults] = useState<TranscriptionSegment[]>([]);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const browserRecognitionKeepAliveRef = useRef<boolean>(false);
 
   // 録音機能の制御
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm'
-      });
+      // ブラウザ互換性の高いmimeTypeを選択
+      const candidates = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+      ];
+      const selected = candidates.find(t => (window as any).MediaRecorder && (window as any).MediaRecorder.isTypeSupported && (window as any).MediaRecorder.isTypeSupported(t)) || 'audio/webm';
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: selected });
       
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
@@ -92,7 +98,8 @@ function App() {
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const type = mediaRecorder.mimeType || 'audio/webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type });
         try {
           const result = await transcribeAudio(audioBlob);
           setTranscriptionResults(result.segments);
@@ -147,24 +154,42 @@ function App() {
         const res = event.results[i];
         if (res.isFinal) finalText += res[0].transcript; else interimText += res[0].transcript;
       }
-      setTranscript({ text: (finalText ? transcript.text + finalText : transcript.text + interimText), isFinal: !!finalText });
+      setTranscript(prev => ({ text: (finalText ? (prev.text + finalText) : (prev.text + interimText)), isFinal: !!finalText }));
       if (finalText && finalText.trim().length > 0) {
         try { appendTranscriptBrowser(finalText.trim()); } catch {}
       }
     };
     recognition.onerror = (e: any) => {
-      setError('音声認識エラー: ' + (e?.error || 'unknown'));
+      const err = e?.error || 'unknown';
+      // 許可系は致命的にして停止、その他は自動再開
+      if (['not-allowed', 'service-not-allowed'].includes(err)) {
+        browserRecognitionKeepAliveRef.current = false;
+        setIsRecording(false);
+        setError('音声認識エラー: ' + err);
+      }
     };
-    recognition.onend = () => setIsRecording(false);
+    recognition.onend = () => {
+      if (browserRecognitionKeepAliveRef.current) {
+        setTimeout(() => {
+          try { (recognition as any).start(); } catch {}
+        }, 250);
+      } else {
+        setIsRecording(false);
+      }
+    };
     recognitionRef.current = recognition;
     setTranscript({ text: '', isFinal: true });
+    browserRecognitionKeepAliveRef.current = true;
     recognition.start();
     setIsRecording(true);
   };
 
   const stopBrowserRecognition = () => {
     if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch {}
+      try {
+        browserRecognitionKeepAliveRef.current = false;
+        recognitionRef.current.stop();
+      } catch {}
     }
     setIsRecording(false);
   };
