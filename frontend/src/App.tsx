@@ -13,6 +13,8 @@ declare global {
 
 type SpeechRecognition = any;
 
+type RecognitionMode = 'server' | 'browser';
+
 const videoConstraints = {
   width: { ideal: 1920 },
   height: { ideal: 1080 },
@@ -59,6 +61,7 @@ function App() {
   const [faceLandmarker, setFaceLandmarker] = useState<FaceLandmarker | null>(null);
   const [faceOverlay, setFaceOverlay] = useState<FaceOverlay | null>(null);
   const lastVideoTimeRef = useRef<number>(-1);
+  const [recognitionMode, setRecognitionMode] = useState<RecognitionMode>('server');
   
   // 音声認識関連の状態
   const [transcript, setTranscript] = useState<Transcript>({ text: '', isFinal: true });
@@ -66,6 +69,7 @@ function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const [transcriptionResults, setTranscriptionResults] = useState<TranscriptionSegment[]>([]);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
 
   // 録音機能の制御
   const startRecording = async () => {
@@ -111,12 +115,58 @@ function App() {
     }
   };
 
+  // ブラウザ内（Web Speech API）の音声認識開始/停止
+  const startBrowserRecognition = () => {
+    const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      setError('このブラウザはWeb Speech APIに対応していません');
+      return;
+    }
+    const recognition: SpeechRecognition = new SR();
+    recognition.lang = 'ja-JP';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onresult = (event: any) => {
+      let finalText = '';
+      let interimText = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const res = event.results[i];
+        if (res.isFinal) finalText += res[0].transcript; else interimText += res[0].transcript;
+      }
+      setTranscript({ text: (finalText ? transcript.text + finalText : transcript.text + interimText), isFinal: !!finalText });
+    };
+    recognition.onerror = (e: any) => {
+      setError('音声認識エラー: ' + (e?.error || 'unknown'));
+    };
+    recognition.onend = () => setIsRecording(false);
+    recognitionRef.current = recognition;
+    setTranscript({ text: '', isFinal: true });
+    recognition.start();
+    setIsRecording(true);
+  };
+
+  const stopBrowserRecognition = () => {
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+    }
+    setIsRecording(false);
+  };
+
   const toggleRecording = () => {
     if (!isRecording) {
-      startRecording();
+      if (recognitionMode === 'server') startRecording(); else startBrowserRecognition();
     } else {
-      stopRecording();
+      if (recognitionMode === 'server') stopRecording(); else stopBrowserRecognition();
     }
+  };
+
+  const toggleRecognitionMode = () => {
+    if (isRecording) {
+      if (recognitionMode === 'server') stopRecording(); else stopBrowserRecognition();
+    }
+    setTranscript({ text: '', isFinal: true });
+    setTranscriptionResults([]);
+    setRecognitionMode(prev => (prev === 'server' ? 'browser' : 'server'));
   };
 
   useEffect(() => {
@@ -225,6 +275,9 @@ function App() {
     <div className="App">
       <header className="App-header">
         <h1>Facial Emotion Analysis</h1>
+        <button className="mode-toggle" onClick={toggleRecognitionMode} title="音声認識モード切替">
+          認識モード: {recognitionMode === 'server' ? 'サーバー(faster‑whisper)' : 'ブラウザ(Web Speech)'}
+        </button>
         <div className="webcam-container">
           <Webcam
             audio={false}
@@ -301,6 +354,30 @@ function App() {
             </div>
           </div>
           
+          {recognitionMode === 'browser' && (
+          <div 
+            className="transcript-container"
+            style={{
+              position: 'absolute',
+              top: faceOverlay ? `${faceOverlay.y + 300}px` : '50%',
+              left: faceOverlay ? `${faceOverlay.x}px` : '80%',
+              transform: 'translate(-50%, 0)',
+              transition: 'all 0.3s ease-out'
+            }}
+          >
+            <h3>音声認識（ブラウザ） {isRecording && <span className="recording-indicator">●認識中</span>}</h3>
+            <div className="transcription-segments">
+              {transcript.text ? (
+                <div className="transcription-segment">
+                  <p className="text">{transcript.text}</p>
+                </div>
+              ) : (
+                <p className="no-results">ここに音声認識結果が表示されます</p>
+              )}
+            </div>
+          </div>
+          )}
+
           {error && <p className="error-message">エラー: {error}</p>}
         </div>
       </header>
