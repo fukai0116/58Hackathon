@@ -62,7 +62,7 @@ function App() {
   const [faceLandmarker, setFaceLandmarker] = useState<FaceLandmarker | null>(null);
   const [faceOverlay, setFaceOverlay] = useState<FaceOverlay | null>(null);
   const [gestureRecognizer, setGestureRecognizer] = useState<GestureRecognizer | null>(null);
-  const [gestureOverlay, setGestureOverlay] = useState<FaceOverlay | null>(null);
+  const [gestureOverlays, setGestureOverlays] = useState<FaceOverlay[]>([]);
   const lastGestureRef = useRef<{ label: string | null; label_ja: string | null; score: number | null } | null>(null);
   const lastVideoTimeRef = useRef<number>(-1);
   const [recognitionMode, setRecognitionMode] = useState<RecognitionMode>('server');
@@ -340,50 +340,50 @@ function App() {
     }
   }, [transcriptionResults]);
 
-  // ジェスチャー認識ループ（顔オーバーレイ位置の近くに表示）
+  // ジェスチャー認識ループ（手の位置に追従して表示）
   useEffect(() => {
-    if (!isAnalyzing) { setGestureOverlay(null); return; }
+    if (!isAnalyzing) { setGestureOverlays([]); return; }
     let rafId = 0;
     const loop = () => {
       try {
         const video = webcamRef.current?.video as HTMLVideoElement | undefined;
         if (video && gestureRecognizer) {
           const g = gestureRecognizer.recognizeForVideo(video, Date.now());
-          let label: string | null = null;
-          if (g?.gestures && g.gestures.length > 0 && g.gestures[0].length > 0) {
-            const top = g.gestures[0][0];
-            if (top?.score >= 0.5) label = top.categoryName;
-            lastGestureRef.current = {
-              label: label,
-              label_ja: label ? ({
-                'Open_Palm': '手のひら',
-                'Closed_Fist': 'グー',
-                'Pointing_Up': '上を指差し',
-                'Thumb_Up': 'いいね',
-                'Thumb_Down': 'だめ',
-                'Victory': 'ピース',
-                'ILoveYou': 'アイラブユー'
-              } as any)[label] || label : null,
-              score: top?.score ?? null,
-            };
+          const map: Record<string, string> = {
+            'Open_Palm': '手のひら',
+            'Closed_Fist': 'グー',
+            'Pointing_Up': '上を指差し',
+            'Thumb_Up': 'いいね',
+            'Thumb_Down': 'だめ',
+            'Victory': 'ピース',
+            'ILoveYou': 'アイラブユー'
+          };
+          const overlays: FaceOverlay[] = [];
+          let best: { label: string | null; score: number } = { label: null, score: 0 };
+          const hands = Math.min(g?.gestures?.length || 0, g?.landmarks?.length || 0);
+          for (let i = 0; i < hands; i++) {
+            const gests = g.gestures?.[i] || [];
+            const top = gests[0];
+            if (top && top.score >= 0.5) {
+              const label: string = top.categoryName;
+              const lms = g.landmarks?.[i];
+              const tip = lms?.[8] || lms?.[0];
+              if (tip) {
+                const px = video.clientWidth - (tip.x * video.clientWidth);
+                const py = tip.y * video.clientHeight;
+                overlays.push({ x: px, y: py - 40, text: map[label] || label });
+                if (top.score > best.score) best = { label, score: top.score };
+              }
+            }
           }
-          if (label && faceOverlay) {
-            const map: Record<string, string> = {
-              'Open_Palm': '手のひら',
-              'Closed_Fist': 'グー',
-              'Pointing_Up': '上を指差し',
-              'Thumb_Up': 'いいね',
-              'Thumb_Down': 'だめ',
-              'Victory': 'ピース',
-              'ILoveYou': 'アイラブユー'
+          setGestureOverlays(overlays);
+          // 直近の代表ジェスチャー（最も高スコア）をAI送信用に保持
+          if (best.label) {
+            lastGestureRef.current = {
+              label: best.label,
+              label_ja: (map as any)[best.label] || best.label,
+              score: best.score,
             };
-            setGestureOverlay({
-              x: faceOverlay.x,
-              y: faceOverlay.y - 60,
-              text: map[label] || label
-            });
-          } else {
-            setGestureOverlay(null);
           }
         }
       } catch {}
@@ -460,7 +460,8 @@ function App() {
               };
               
               setFaceOverlay({
-                x: noseTip.x * video.clientWidth,
+                // mirrored=true のため左右反転して表示
+                x: (video.clientWidth - (noseTip.x * video.clientWidth)),
                 y: (noseTip.y * video.clientHeight) - 50,
                 text: emotionToJapanese[analysisResult.dominant_emotion as keyof typeof emotionToJapanese] || analysisResult.dominant_emotion
               });
@@ -516,7 +517,7 @@ function App() {
               const top1 = clamp(faceOverlay.y - 120, margin, viewport.h - margin);
               const left1 = clamp(faceOverlay.x, margin, viewport.w - margin);
               const top2 = clamp(faceOverlay.y - 10, margin, viewport.h - margin);
-              const left2 = clamp(faceOverlay.x + 220, margin, viewport.w - margin);
+              const left2 = clamp(faceOverlay.x - 220, margin, viewport.w - margin);
               const summaryText = sanitizeSummary(geminiResult.summary || `${geminiResult.emotion || ''} ${geminiResult.intent || ''}`);
               const innerText = sanitizeInner(geminiResult.inner_voice || '');
               return (
@@ -547,19 +548,20 @@ function App() {
               );
             })()
           )}
-          {gestureOverlay && (
-            <div 
+          {gestureOverlays && gestureOverlays.map((ov, idx) => (
+            <div
+              key={`gesture-${idx}`}
               className="ar-overlay gesture-overlay"
               style={{
                 position: 'absolute',
-                top: `${gestureOverlay.y - 50}px`,
-                left: `${gestureOverlay.x}px`,
+                top: `${ov.y - 10}px`,
+                left: `${ov.x}px`,
                 transform: 'translate(-50%, -100%)'
               }}
             >
-              {gestureOverlay.text}
+              {ov.text}
             </div>
-          )}
+          ))}
         </div>
         <div className="controls">
           <button 
